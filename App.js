@@ -23,6 +23,7 @@ import { File } from "expo-file-system";
 import * as FileSystem from "expo-file-system/legacy";
 import Constants from "expo-constants";
 import { saveSession } from "./sessionStorage";
+import { generateSessionInsights } from "./sessionInsights";
 
 // ─── Default Configuration ──────────────────────────────────────────────────
 const DEFAULT_API_KEY = Constants.expoConfig?.extra?.sarvamApiKey || "";
@@ -431,8 +432,7 @@ export default function App() {
       setCoachingResult(validatedResult);
       setPhase("done");
 
-      // ── Persist Completed Session Locally ──────────────────────────────────
-      saveSession({
+      const completedSessionData = {
         startedAt: sessionStartedAtRef.current || new Date().toISOString(),
         endedAt: sessionEndedAtRef.current || new Date().toISOString(),
         duration: sessionDurationRef.current || recordingDuration || 0,
@@ -441,7 +441,26 @@ export default function App() {
         mode: validatedResult.mode,
         signals: validatedResult.signals,
         suggestedAction: validatedResult.suggestedAction,
-      }).catch((storageErr) => {
+      };
+
+      // ── Generate Deterministic Session Insights (Score & Graph) ───────────
+      try {
+        const insights = generateSessionInsights(completedSessionData);
+        console.log("\n========================================================");
+        console.log(
+          `📈 [LiveNudge] DETERMINISTIC SESSION SCORE: ${insights.score}/100 (${insights.scoreLabel})`
+        );
+        console.log("📊 Score Factors:", JSON.stringify(insights.scoreFactors, null, 2));
+        console.log(
+          `🕸️ [LiveNudge] GRAPH DATA: ${insights.graph.nodes.length} nodes, ${insights.graph.relationships.length} relationships`
+        );
+        console.log("========================================================\n");
+      } catch (insightErr) {
+        console.error("❌ [LiveNudge] Session insights computation failed:", insightErr);
+      }
+
+      // ── Persist Completed Session Locally ──────────────────────────────────
+      saveSession(completedSessionData).catch((storageErr) => {
         console.error("❌ [LiveNudge] Session persistence failed (in-memory flow preserved):", storageErr);
       });
     } catch (err) {
