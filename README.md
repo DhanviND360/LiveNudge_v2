@@ -1,96 +1,112 @@
-# LiveNudge (v2)
+# LiveNudge
 
-A real-time AI communication coach built with **Expo (SDK 57)** and **Sarvam AI**.
-
-## Current Development Progress
-
-- **Microphone Recording**: Native audio recording using `expo-audio` (`useAudioRecorder`, `AudioModule`). Tested and working in Expo Go on Android.
-- **Audio Capture**: Successfully captures and stores `.m4a` audio files in cache (`Audio/recording-*.m4a`).
-- **Sarvam STT Integration**: Configured to upload native audio files directly to `https://api.sarvam.ai/speech-to-text` (`saaras:v3`).
-- **Sarvam Chat Reasoning**: Connects to `https://api.sarvam.ai/v1/chat/completions` using `sarvam-105b-conversations` with `reasoning_effort: null` for low latency.
-- **UI & Controls**:
-  - Live recording state with timer and status badges.
-  - Interactive **Sarvam API Configuration** panel (editable STT/Chat URLs, models, and API key).
-  - Dedicated **Speech Transcript** card.
-  - Dedicated **Chat Conversation Log** (user prompt + coach nudge).
-- **Terminal Observability**: Real-time console logging for every stage (mic, STT, Chat completions, errors).
+> **Communication coaching while you talk.**  
+> An AI-powered mobile communication coach that listens to your conversations and delivers actionable real-time delivery nudges, deterministic scoring, and conversational relationship insights.
 
 ---
 
-## Known Errors & Warnings Encountered
+## 🚀 How It Works
 
-During testing on Expo Go (Android), the following runtime logs and errors were recorded:
+LiveNudge operates on a verified, low-latency mobile pipeline:
 
-```text
-WARN  SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead. See https://github.com/AppAndFlow/react-native-safe-area-context
-LOG  🔒 [LiveNudge] Checking microphone permissions...
-LOG  🔒 [LiveNudge] Microphone permission status: granted
-LOG  
-========================================================
-LOG  🎙️ [LiveNudge] STARTING MICROPHONE RECORDING
-LOG  ========================================================
-LOG  
-========================================================
-LOG  ⏹️ [LiveNudge] STOPPING RECORDING
-LOG  ========================================================
-LOG  📁 [LiveNudge] Audio file URI: file:///data/user/0/host.exp.exponent/cache/ExperienceData/%2540anonymous%252FLivenudge_v2-310acf8f-0fde-47a0-832b-df25298c0e69/Audio/recording-b214fcbd-910f-431b-a611-5d8e0c311872.m4a
-WARN  Method getInfoAsync imported from "expo-file-system" is deprecated.
-You can migrate to the new filesystem API using "File" and "Directory" classes or import the legacy API from "expo-file-system/legacy".
-API reference and examples are available in the filesystem docs: https://docs.expo.dev/versions/v54.0.0/sdk/filesystem/
-ERROR  ❌ [LiveNudge] Failed to stop recording: [Error: Method getInfoAsync imported from "expo-file-system" is deprecated.
-You can migrate to the new filesystem API using "File" and "Directory" classes or import the legacy API from "expo-file-system/legacy".
-API reference and examples are available in the filesystem docs: https://docs.expo.dev/versions/v54.0.0/sdk/filesystem/]
+```
+[ Native Mic Capture ]
+        │  (expo-audio produces .m4a in cache)
+        ▼
+[ Sarvam Speech-to-Text ]
+        │  (POST /speech-to-text with saaras:v3)
+        ▼
+[ Sarvam Chat Reasoning ]
+        │  (POST /v1/chat/completions with sarvam-105b-conversations)
+        ▼
+[ Structured Coaching Result ]
+        │  (nudge, focus mode, observed signals, suggested micro-action)
+        ▼
+[ Deterministic Insights & Graph ]
+        │  (reproducible score/100, factor deductions, relational entity graph)
+        ▼
+[ Local Session Persistence ]
+           (saved securely to AsyncStorage)
 ```
 
-### Status: Resolved
-1. Replaced deprecated `getInfoAsync` with modern `File` API + `expo-file-system/legacy` fallback; file validation is non-blocking and verified `.m4a` URIs stream reliably into Sarvam STT.
-2. Replaced deprecated `SafeAreaView` with `react-native-safe-area-context` (`SafeAreaProvider` & `SafeAreaView`).
-3. Installed missing peer dependency `expo-asset` required by `expo-audio` (`21/21 expo-doctor` checks pass).
+---
+
+## 📱 User Journey
+
+1. **Home Screen**: Clean interface displaying LiveNudge coaching pillars and the primary **"Start Conversation"** action.
+2. **Recording Screen**: High-quality microphone recording with live elapsed timer and intuitive **"End Conversation"** control.
+3. **Processing Screen**: Real-time multi-stage progress tracking without fabricated metrics:
+   - `Transcribing` (Sarvam STT)
+   - `Analyzing conversation` (Sarvam 105B)
+   - `Preparing your nudge`
+4. **Result Screen**: Actionable feedback:
+   - **Focus Mode**: Semantic badge (`clarity`, `confidence`, `empathy`, `concise_response`, etc.)
+   - **Primary Nudge**: Clear, concise coaching takeaway.
+   - **Suggested Action**: Immediate conversational adjustment.
+   - **Observed Signals**: Observable signals (e.g. filler words, pace variance, hedge words).
+   - **Spoken Transcript**: Expandable accordion with word count.
+5. **Session Insights**:
+   - **Concise Session Summary**: Duration, word count, focus mode, and qualitative takeaway.
+   - **Deterministic Score**: Objective evaluation out of 100 derived strictly from observable signals and pace.
+   - **Score Factors**: Transparent breakdown of deductions or neutral ratings.
+   - **Conversation Graph**: Interactive view of conversational entities (nodes) and semantic links (relationships).
+6. **Complete Screen**:
+   - Compact session overview.
+   - **"View Insights"** to review details.
+   - **"Start New Conversation"** to reset cleanly for the next session.
 
 ---
 
-## How to Run on Mobile Device
+## 🛠️ Tech Stack
 
-### Prerequisites
-1. Install **Expo Go** from Google Play Store (Android) or App Store (iOS).
-2. Connect your phone and PC to the same Wi-Fi network (or use Tunnel mode `--tunnel`).
-3. Ensure `.env` contains your valid `SARVAM_API_KEY`:
-   ```env
-   SARVAM_API_KEY=your_key_here
-   ```
+- **Framework**: [Expo](https://expo.dev/) (SDK 57) / [React Native](https://reactnative.dev/) (0.86)
+- **Audio Capture**: `expo-audio` (native recording in `.m4a`)
+- **Speech-to-Text**: [Sarvam AI STT](https://api.sarvam.ai/speech-to-text) (`saaras:v3`)
+- **Reasoning Model**: [Sarvam AI Chat](https://api.sarvam.ai/v1/chat/completions) (`sarvam-105b-conversations`, `reasoning_effort: null` for low latency)
+- **State & Storage**: React Hooks & `@react-native-async-storage/async-storage`
+- **File Management**: `expo-file-system/legacy` & Expo `File` API
 
-### Start Development Server
+---
+
+## ⚡ Getting Started
+
+### 1. Prerequisites
+- Node.js (v18+)
+- Mobile device with **Expo Go** installed ([Android](https://play.google.com/store/apps/details?id=host.exp.exponent) or [iOS](https://apps.apple.com/app/expo-go/id982107779))
+
+### 2. Configure Environment
+Create a `.env` file in the project root:
+```env
+SARVAM_API_KEY=your_sarvam_api_key_here
+```
+
+### 3. Start the Application
+Run the Expo development server:
 ```bash
 npx expo start
 ```
-- For LAN connection: Scan the displayed QR code with the Expo Go app.
-- For Tunnel connection (if on different Wi-Fi or cellular):
+
+- **Same Wi-Fi**: Scan the QR code displayed in the terminal with the Expo Go app.
+- **Different Network / Cellular**: Run with tunnel mode:
   ```bash
   npx expo start --tunnel
   ```
 
 ---
 
-## Verified End-to-End Flow
-1. **Home Screen**: Tap **"Start Conversation"**.
-2. **Recording Screen**: Speak naturally for 5–20 seconds into the microphone. Timer tracks elapsed seconds.
-3. **End Conversation**: Tap **"End Conversation"**.
-4. **Processing Screen**: Real-time visual progress through:
-   - `Transcribing` (Sarvam STT `saaras:v3`)
-   - `Analyzing conversation` (Sarvam 105B reasoning)
-   - `Preparing your nudge`
-5. **Result Screen**: Displays:
-   - Communication Mode badge (e.g. `CLARITY`, `CONFIDENCE`, `EMPATHY`, `CONCISE_RESPONSE`)
-   - Primary actionable Nudge
-   - Suggested Action micro-step
-   - Observable Conversational Signals (or clean delivery notice)
-   - Collapsible Spoken Transcript accordion
-6. **Session Insights**:
-   - Concise Session Summary (duration, words spoken, focus mode, key takeaway)
-   - Deterministic Communication Score (e.g. `73/100 (Effective)`)
-   - Score Factor breakdown with specific point adjustments
-   - Relational Conversation Graph (Entities & Semantic Relationships)
-7. **Complete Screen**:
-   - Summary checkmark & compact score
-   - "View Insights" button
-   - "Start New Conversation" button (resets state cleanly for next run)
+## 📁 Project Structure
+
+```
+├── App.js               # Main application component & screen flows
+├── app.config.js        # Dynamic Expo configuration & environment injection
+├── sessionStorage.js    # Local session storage operations (AsyncStorage)
+├── sessionInsights.js   # Deterministic scoring algorithm & graph generation
+├── .env                 # API keys & local environment configuration
+└── package.json         # Dependencies & SDK 57 scripts
+```
+
+---
+
+## 🔒 Privacy & Security
+
+Audio and transcripts are processed securely during the active session. Only finalized coaching sessions and scores are stored locally on the device via encrypted AsyncStorage. API keys and model chain-of-thought are never logged or stored.
