@@ -22,7 +22,7 @@ import {
 import { File } from "expo-file-system";
 import * as FileSystem from "expo-file-system/legacy";
 import Constants from "expo-constants";
-import { saveSession } from "./sessionStorage";
+import { saveSession, getRecentSessions } from "./sessionStorage";
 import { generateSessionInsights } from "./sessionInsights";
 
 // ─── Default Configuration ──────────────────────────────────────────────────
@@ -126,8 +126,14 @@ export default function App() {
   // ── App Flow State ────────────────────────────────────────────────────────
   // phase: "idle" | "recording" | "transcribing" | "reasoning" | "done" | "error"
   const [phase, setPhase] = useState("idle");
+  // activeStep for completed session navigation: "result" | "insights" | "complete"
+  const [activeStep, setActiveStep] = useState("result");
+
   const [transcript, setTranscript] = useState("");
   const [coachingResult, setCoachingResult] = useState(null);
+  const [sessionInsights, setSessionInsights] = useState(null);
+  const [recentSessions, setRecentSessions] = useState([]);
+  const [showTranscript, setShowTranscript] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [permGranted, setPermGranted] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -165,6 +171,17 @@ export default function App() {
     })();
   }, []);
 
+  // ── Load Recent Sessions for Home Screen ──────────────────────────────────
+  useEffect(() => {
+    getRecentSessions(3)
+      .then((sessions) => {
+        if (Array.isArray(sessions)) {
+          setRecentSessions(sessions);
+        }
+      })
+      .catch(() => {});
+  }, [phase]);
+
   // ── Recording Duration Timer ──────────────────────────────────────────────
   useEffect(() => {
     let timer = null;
@@ -181,12 +198,15 @@ export default function App() {
     };
   }, [phase]);
 
-  // ── Reset ─────────────────────────────────────────────────────────────────
+  // ── Reset to Home ─────────────────────────────────────────────────────────
   function handleReset() {
-    console.log("↺ [LiveNudge] Resetting session state.");
+    console.log("↺ [LiveNudge] Resetting session state to Home.");
     setPhase("idle");
+    setActiveStep("result");
     setTranscript("");
     setCoachingResult(null);
+    setSessionInsights(null);
+    setShowTranscript(false);
     setErrorMsg("");
     setRecordingDuration(0);
   }
@@ -280,7 +300,7 @@ export default function App() {
   async function runPipeline(audioUri) {
     const key = apiKey.trim();
     if (!key) {
-      const err = "Sarvam API Key is missing. Enter your key in .env or the Settings panel below.";
+      const err = "Sarvam API Key is missing. Enter your key in .env or the API Configuration panel.";
       console.error("❌ [LiveNudge] " + err);
       setErrorMsg(err);
       setPhase("error");
@@ -300,7 +320,6 @@ export default function App() {
       console.log("📁 Uploading Audio URI:", audioUri);
       console.log("========================================================");
 
-      // Determine MIME type based on file extension
       const uriParts = audioUri.split(".");
       const ext = uriParts[uriParts.length - 1]?.toLowerCase() || "m4a";
       const mimeMap = {
@@ -316,7 +335,6 @@ export default function App() {
       const mimeType = mimeMap[ext] || "audio/mp4";
       console.log(`🎵 [LiveNudge] Audio format detected: .${ext} (${mimeType})`);
 
-      // Use legacy FileSystem.uploadAsync for native multipart upload
       const uploadResult = await FileSystem.uploadAsync(sttUrl.trim(), audioUri, {
         httpMethod: "POST",
         uploadType: FileSystem.FileSystemUploadType.MULTIPART,
@@ -336,9 +354,7 @@ export default function App() {
       console.log("========================================================");
 
       if (uploadResult.status < 200 || uploadResult.status >= 300) {
-        throw new Error(
-          `STT API returned HTTP ${uploadResult.status}: ${uploadResult.body}`
-        );
+        throw new Error(`STT API returned HTTP ${uploadResult.status}: ${uploadResult.body}`);
       }
 
       const sttData = JSON.parse(uploadResult.body);
@@ -410,7 +426,6 @@ export default function App() {
         throw new Error("Empty content received from Sarvam chat completion.");
       }
 
-      // Extract JSON substring (stripping any accidental code fences)
       let parsedObj;
       try {
         const jsonStr = extractJson(rawContent);
@@ -421,7 +436,6 @@ export default function App() {
         );
       }
 
-      // Strictly validate result against LiveNudge contract
       const validatedResult = validateLiveNudgeResult(parsedObj);
 
       console.log("\n========================================================");
@@ -430,7 +444,6 @@ export default function App() {
       console.log("========================================================\n");
 
       setCoachingResult(validatedResult);
-      setPhase("done");
 
       const completedSessionData = {
         startedAt: sessionStartedAtRef.current || new Date().toISOString(),
@@ -444,15 +457,18 @@ export default function App() {
       };
 
       // ── Generate Deterministic Session Insights (Score & Graph) ───────────
+      let insightsData = null;
       try {
-        const insights = generateSessionInsights(completedSessionData);
+        insightsData = generateSessionInsights(completedSessionData);
+        setSessionInsights(insightsData);
+
         console.log("\n========================================================");
         console.log(
-          `📈 [LiveNudge] DETERMINISTIC SESSION SCORE: ${insights.score}/100 (${insights.scoreLabel})`
+          `📈 [LiveNudge] DETERMINISTIC SESSION SCORE: ${insightsData.score}/100 (${insightsData.scoreLabel})`
         );
-        console.log("📊 Score Factors:", JSON.stringify(insights.scoreFactors, null, 2));
+        console.log("📊 Score Factors:", JSON.stringify(insightsData.scoreFactors, null, 2));
         console.log(
-          `🕸️ [LiveNudge] GRAPH DATA: ${insights.graph.nodes.length} nodes, ${insights.graph.relationships.length} relationships`
+          `🕸️ [LiveNudge] GRAPH DATA: ${insightsData.graph.nodes.length} nodes, ${insightsData.graph.relationships.length} relationships`
         );
         console.log("========================================================\n");
       } catch (insightErr) {
@@ -463,6 +479,10 @@ export default function App() {
       saveSession(completedSessionData).catch((storageErr) => {
         console.error("❌ [LiveNudge] Session persistence failed (in-memory flow preserved):", storageErr);
       });
+
+      // Transition to Result Screen
+      setActiveStep("result");
+      setPhase("done");
     } catch (err) {
       console.error("❌ [LiveNudge] Chat API / Validation Failure:", err);
       setErrorMsg("Coaching Error: " + (err.message || String(err)));
@@ -471,594 +491,1753 @@ export default function App() {
     }
   }
 
-  // ── Helper Labels ─────────────────────────────────────────────────────────
-  const statusBadge = {
-    idle: { label: "Ready to Record", color: "#616161", bg: "#f5f5f5" },
-    recording: {
-      label: `Recording (${recordingDuration}s)… Tap End to analyze`,
-      color: "#d32f2f",
-      bg: "#ffebee",
-    },
-    transcribing: {
-      label: "Step 1/2: Sarvam STT converting speech to text…",
-      color: "#f57c00",
-      bg: "#fff3e0",
-    },
-    reasoning: {
-      label: "Step 2/2: Sarvam 105b generating coaching nudge…",
-      color: "#1976d2",
-      bg: "#e3f2fd",
-    },
-    done: { label: "Completed: Live coaching nudge ready", color: "#388e3c", bg: "#e8f5e9" },
-    error: { label: "Error encountered", color: "#d32f2f", bg: "#ffebee" },
-  }[phase];
+  // ── Helper: Format MM:SS ──────────────────────────────────────────────────
+  function formatSeconds(secs) {
+    const s = typeof secs === "number" && secs >= 0 ? secs : 0;
+    const mins = Math.floor(s / 60);
+    const remainder = s % 60;
+    return `${String(mins).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+  }
 
-  const isLoading = phase === "transcribing" || phase === "reasoning";
+  // ── Helper: Mode Color ────────────────────────────────────────────────────
+  function getModeColor(modeName) {
+    const key = (modeName || "").toLowerCase();
+    const colors = {
+      clarity: "#38bdf8",
+      confidence: "#a855f7",
+      empathy: "#ec4899",
+      listening: "#3b82f6",
+      tone: "#f59e0b",
+      concise_response: "#10b981",
+    };
+    return colors[key] || "#38bdf8";
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // RENDER SECTIONS
+  // ──────────────────────────────────────────────────────────────────────────
 
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.safeArea} edges={["top", "bottom", "left", "right"]}>
-        <StatusBar style="dark" />
+        <StatusBar style="light" />
         <KeyboardAvoidingView
           style={styles.container}
           behavior={Platform.OS === "ios" ? "padding" : undefined}
         >
-          <ScrollView
-            style={styles.scrollView}
-            contentContainerStyle={styles.scrollContent}
-            keyboardShouldPersistTaps="handled"
-          >
-            {/* ── App Header ─────────────────────────────────────────────── */}
-            <View style={styles.header}>
-              <Text style={styles.appTitle}>LiveNudge</Text>
-              <Text style={styles.appSubtitle}>Real-time AI Communication Coach</Text>
+          {/* ── TOP NAV BAR ───────────────────────────────────────────────── */}
+          <View style={styles.topNav}>
+            <View>
+              <Text style={styles.brandTitle}>LiveNudge</Text>
+              <Text style={styles.brandSubtitle}>AI Communication Coach</Text>
             </View>
 
-            {/* ── Status Banner ──────────────────────────────────────────── */}
-            <View style={[styles.statusBanner, { backgroundColor: statusBadge.bg }]}>
-              <Text style={[styles.statusBannerText, { color: statusBadge.color }]}>
-                {statusBadge.label}
-              </Text>
-            </View>
+            {/* Quick Config Toggle */}
+            <TouchableOpacity
+              style={styles.configToggleBtn}
+              onPress={() => setShowConfig(!showConfig)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.configToggleText}>{showConfig ? "Done" : "Settings"}</Text>
+            </TouchableOpacity>
+          </View>
 
-            {/* ── Settings Accordion / Separate Config Areas ─────────────── */}
-            <View style={styles.configCard}>
+          {/* ── ERROR STATE (Anti-Happy Path) ────────────────────────────── */}
+          {errorMsg !== "" && (
+            <View style={styles.errorBanner}>
+              <View style={styles.errorContent}>
+                <Text style={styles.errorTitle}>Action Needed</Text>
+                <Text style={styles.errorBody}>{errorMsg}</Text>
+              </View>
               <TouchableOpacity
-                style={styles.configHeader}
-                onPress={() => setShowConfig(!showConfig)}
+                style={styles.errorDismissBtn}
+                onPress={handleReset}
                 activeOpacity={0.7}
               >
-                <Text style={styles.configHeaderTitle}>
-                  ⚙️ Sarvam API Configuration {showConfig ? "▲" : "▼"}
-                </Text>
-                <Text style={styles.configHeaderSubtitle}>
-                  {showConfig ? "Hide URLs & Models" : "Edit STT / Chat URLs & Models"}
-                </Text>
+                <Text style={styles.errorDismissText}>Dismiss</Text>
               </TouchableOpacity>
+            </View>
+          )}
 
-              {showConfig && (
-                <View style={styles.configBody}>
-                  {/* API Key Area */}
+          {/* ── CONFIGURATION MODAL / PANEL ───────────────────────────────── */}
+          {showConfig && (
+            <View style={styles.configModalOverlay}>
+              <View style={styles.configModalCard}>
+                <View style={styles.configModalHeader}>
+                  <Text style={styles.configModalTitle}>API Configuration</Text>
+                  <TouchableOpacity onPress={() => setShowConfig(false)}>
+                    <Text style={styles.configModalClose}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <ScrollView style={styles.configModalScroll}>
                   <View style={styles.inputGroup}>
-                    <Text style={styles.inputLabel}>Sarvam API Key (Subscription Key):</Text>
+                    <Text style={styles.inputLabel}>Sarvam API Key:</Text>
                     <TextInput
                       style={styles.textInput}
                       value={apiKey}
                       onChangeText={setApiKey}
-                      placeholder="Enter Sarvam API Key"
-                      placeholderTextColor="#999"
-                      secureTextEntry={false}
+                      placeholder="Enter API Key"
+                      placeholderTextColor="#64748b"
                       autoCapitalize="none"
                       autoCorrect={false}
                     />
-                    <Text style={styles.inputHint}>
-                      Loaded from .env by default. Editable here anytime.
-                    </Text>
                   </View>
 
-                  {/* STT URL Area */}
                   <View style={styles.inputGroup}>
-                    <Text style={styles.inputLabel}>STT Endpoint URL:</Text>
+                    <Text style={styles.inputLabel}>STT Endpoint:</Text>
                     <TextInput
                       style={styles.textInput}
                       value={sttUrl}
                       onChangeText={setSttUrl}
-                      placeholder="https://api.sarvam.ai/speech-to-text"
-                      placeholderTextColor="#999"
                       autoCapitalize="none"
                       autoCorrect={false}
                     />
                   </View>
 
-                  {/* STT Model Area */}
                   <View style={styles.inputGroup}>
                     <Text style={styles.inputLabel}>STT Model:</Text>
                     <TextInput
                       style={styles.textInput}
                       value={sttModel}
                       onChangeText={setSttModel}
-                      placeholder="saaras:v3"
-                      placeholderTextColor="#999"
                       autoCapitalize="none"
                       autoCorrect={false}
                     />
                   </View>
 
-                  {/* Chat URL Area */}
                   <View style={styles.inputGroup}>
-                    <Text style={styles.inputLabel}>Chat Completions URL:</Text>
+                    <Text style={styles.inputLabel}>Chat Completions Endpoint:</Text>
                     <TextInput
                       style={styles.textInput}
                       value={chatUrl}
                       onChangeText={setChatUrl}
-                      placeholder="https://api.sarvam.ai/v1/chat/completions"
-                      placeholderTextColor="#999"
                       autoCapitalize="none"
                       autoCorrect={false}
                     />
                   </View>
 
-                  {/* Chat Model Area */}
                   <View style={styles.inputGroup}>
                     <Text style={styles.inputLabel}>Chat Model:</Text>
                     <TextInput
                       style={styles.textInput}
                       value={chatModel}
                       onChangeText={setChatModel}
-                      placeholder="sarvam-105b-conversations"
-                      placeholderTextColor="#999"
                       autoCapitalize="none"
                       autoCorrect={false}
                     />
                   </View>
-                </View>
-              )}
-            </View>
-
-            {/* ── Error Banner ───────────────────────────────────────────── */}
-            {errorMsg !== "" && (
-              <View style={styles.errorCard}>
-                <Text style={styles.errorTitle}>⚠️ Issue Occurred</Text>
-                <Text style={styles.errorBody}>{errorMsg}</Text>
+                </ScrollView>
               </View>
-            )}
+            </View>
+          )}
 
-            {/* ── Loading Spinner ────────────────────────────────────────── */}
-            {isLoading && (
-              <View style={styles.loadingCard}>
-                <ActivityIndicator size="large" color="#1976d2" />
-                <Text style={styles.loadingText}>
-                  {phase === "transcribing"
-                    ? "Transcribing voice with Sarvam STT..."
-                    : "Sarvam 105b reasoning & synthesizing nudge..."}
+          {/* ──────────────────────────────────────────────────────────────────
+              VIEW 1: HOME SCREEN (Idle Phase)
+             ────────────────────────────────────────────────────────────────── */}
+          {phase === "idle" && (
+            <ScrollView style={styles.scrollArea} contentContainerStyle={styles.homeContainer}>
+              <View style={styles.homeHero}>
+                <View style={styles.heroBadge}>
+                  <View style={styles.heroBadgeDot} />
+                  <Text style={styles.heroBadgeText}>READY TO LISTEN</Text>
+                </View>
+                <Text style={styles.heroHeading}>Communication coaching while you talk.</Text>
+                <Text style={styles.heroSubhead}>
+                  Speak freely in meetings, calls, or presentations. Get actionable delivery nudges,
+                  observable signals, and deterministic insights.
                 </Text>
               </View>
-            )}
 
-            {/* ── Speech-to-Text Transcript Display Area ─────────────────── */}
-            {transcript !== "" && (
-              <View style={styles.card}>
-                <View style={styles.cardHeaderRow}>
-                  <Text style={styles.cardSectionBadge}>SPEECH TRANSCRIPT</Text>
-                  <Text style={styles.cardModelTag}>Model: {sttModel}</Text>
+              {/* Coaching Pillars */}
+              <View style={styles.featuresCard}>
+                <View style={styles.featureRow}>
+                  <Text style={styles.featureIcon}>🎙️</Text>
+                  <View style={styles.featureTextCol}>
+                    <Text style={styles.featureTitle}>Native Microphone Capture</Text>
+                    <Text style={styles.featureDesc}>Accurate real-time speech transcription via Sarvam STT.</Text>
+                  </View>
                 </View>
-                <Text style={styles.transcriptText}>{transcript}</Text>
+
+                <View style={styles.featureDivider} />
+
+                <View style={styles.featureRow}>
+                  <Text style={styles.featureIcon}>💡</Text>
+                  <View style={styles.featureTextCol}>
+                    <Text style={styles.featureTitle}>Zero-Latency Coaching</Text>
+                    <Text style={styles.featureDesc}>Sarvam 105b evaluates delivery without reasoning delays.</Text>
+                  </View>
+                </View>
+
+                <View style={styles.featureDivider} />
+
+                <View style={styles.featureRow}>
+                  <Text style={styles.featureIcon}>📈</Text>
+                  <View style={styles.featureTextCol}>
+                    <Text style={styles.featureTitle}>Deterministic Scoring & Graph</Text>
+                    <Text style={styles.featureDesc}>Reproducible scores and relational conversation nodes.</Text>
+                  </View>
+                </View>
               </View>
-            )}
 
-            {/* ── Chat Transcript & Coaching Nudge Display Area ──────────── */}
-            {(transcript !== "" || coachingResult !== null) && (
-              <View style={[styles.card, styles.chatCard]}>
-                <View style={styles.cardHeaderRow}>
-                  <Text style={[styles.cardSectionBadge, styles.chatBadge]}>
-                    CHAT CONVERSATION LOG
+              {/* Recent Sessions Preview */}
+              {recentSessions.length > 0 && (
+                <View style={styles.recentCard}>
+                  <Text style={styles.recentSectionTitle}>RECENT CONVERSATIONS</Text>
+                  {recentSessions.map((item, idx) => (
+                    <View key={item.sessionId || idx} style={styles.recentItemRow}>
+                      <View style={styles.recentItemLeft}>
+                        <View
+                          style={[
+                            styles.recentModePill,
+                            { borderColor: getModeColor(item.mode) },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.recentModePillText,
+                              { color: getModeColor(item.mode) },
+                            ]}
+                          >
+                            {item.mode ? item.mode.toUpperCase() : "GENERAL"}
+                          </Text>
+                        </View>
+                        <Text style={styles.recentNudgePreview} numberOfLines={1}>
+                          {item.nudge || "Coaching summary"}
+                        </Text>
+                      </View>
+                      <Text style={styles.recentDurationText}>{item.duration}s</Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* Primary Action */}
+              <View style={styles.bottomActionArea}>
+                <TouchableOpacity
+                  style={[styles.primaryActionBtn, styles.startBtn]}
+                  onPress={startRecording}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.primaryActionBtnText}>Start Conversation</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          )}
+
+          {/* ──────────────────────────────────────────────────────────────────
+              VIEW 2: RECORDING SCREEN
+             ────────────────────────────────────────────────────────────────── */}
+          {phase === "recording" && (
+            <View style={styles.recordingContainer}>
+              <View style={styles.recordingHeader}>
+                <View style={styles.recordingPill}>
+                  <View style={styles.recordingPillDot} />
+                  <Text style={styles.recordingPillText}>RECORDING ACTIVE</Text>
+                </View>
+              </View>
+
+              {/* Large Timer Display */}
+              <View style={styles.timerBlock}>
+                <Text style={styles.timerText}>{formatSeconds(recordingDuration)}</Text>
+                <Text style={styles.timerSubtext}>Microphone listening</Text>
+              </View>
+
+              {/* Conversation Area */}
+              <View style={styles.listeningCard}>
+                <Text style={styles.listeningCardTitle}>CONVERSATION IN PROGRESS</Text>
+                <Text style={styles.listeningCardBody}>
+                  Speak naturally. LiveNudge is capturing your delivery to evaluate clarity, pace,
+                  and conversational structure.
+                </Text>
+                <View style={styles.audioActiveRow}>
+                  <View style={styles.pulseBar} />
+                  <View style={[styles.pulseBar, { height: 20 }]} />
+                  <View style={[styles.pulseBar, { height: 14 }]} />
+                  <View style={[styles.pulseBar, { height: 26 }]} />
+                  <View style={[styles.pulseBar, { height: 16 }]} />
+                  <Text style={styles.audioActiveText}>Audio stream buffering...</Text>
+                </View>
+              </View>
+
+              {/* Bottom End Action */}
+              <View style={styles.bottomActionArea}>
+                <TouchableOpacity
+                  style={[styles.primaryActionBtn, styles.endRecordingBtn]}
+                  onPress={stopRecording}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.primaryActionBtnText}>End Conversation</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {/* ──────────────────────────────────────────────────────────────────
+              VIEW 3: PROCESSING SCREEN
+             ────────────────────────────────────────────────────────────────── */}
+          {(phase === "transcribing" || phase === "reasoning") && (
+            <View style={styles.processingContainer}>
+              <View style={styles.processingCard}>
+                <ActivityIndicator size="large" color="#38bdf8" style={styles.processingSpinner} />
+
+                <Text style={styles.processingTitle}>
+                  {phase === "transcribing"
+                    ? "Transcribing"
+                    : "Analyzing conversation"}
+                </Text>
+
+                <Text style={styles.processingSubhead}>
+                  {phase === "transcribing"
+                    ? "Converting audio into accurate text via Sarvam STT..."
+                    : "Synthesizing real-time coaching feedback via Sarvam 105B..."}
+                </Text>
+
+                {/* Pipeline Step Tracker (Real data, no fake percentages) */}
+                <View style={styles.pipelineSteps}>
+                  <View style={styles.stepItem}>
+                    <View
+                      style={[
+                        styles.stepBullet,
+                        phase === "transcribing"
+                          ? styles.stepBulletActive
+                          : styles.stepBulletDone,
+                      ]}
+                    />
+                    <Text
+                      style={[
+                        styles.stepLabel,
+                        phase === "transcribing" && styles.stepLabelActive,
+                      ]}
+                    >
+                      Transcribing
+                    </Text>
+                  </View>
+
+                  <View style={styles.stepItem}>
+                    <View
+                      style={[
+                        styles.stepBullet,
+                        phase === "reasoning"
+                          ? styles.stepBulletActive
+                          : styles.stepBulletPending,
+                      ]}
+                    />
+                    <Text
+                      style={[
+                        styles.stepLabel,
+                        phase === "reasoning" && styles.stepLabelActive,
+                      ]}
+                    >
+                      Analyzing conversation
+                    </Text>
+                  </View>
+
+                  <View style={styles.stepItem}>
+                    <View style={[styles.stepBullet, styles.stepBulletPending]} />
+                    <Text style={styles.stepLabel}>Preparing your nudge</Text>
+                  </View>
+                </View>
+              </View>
+            </View>
+          )}
+
+          {/* ──────────────────────────────────────────────────────────────────
+              VIEW 4, 5, 6: COMPLETED PHASES (RESULT, INSIGHTS, COMPLETE)
+             ────────────────────────────────────────────────────────────────── */}
+          {phase === "done" && coachingResult && (
+            <View style={styles.completedFlowWrapper}>
+              {/* Step Navigation Tabs */}
+              <View style={styles.flowTabsRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.flowTabItem,
+                    activeStep === "result" && styles.flowTabItemActive,
+                  ]}
+                  onPress={() => setActiveStep("result")}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.flowTabText,
+                      activeStep === "result" && styles.flowTabTextActive,
+                    ]}
+                  >
+                    1. Nudge
                   </Text>
-                  <Text style={styles.cardModelTag}>Model: {chatModel}</Text>
-                </View>
+                </TouchableOpacity>
 
-                {/* User Prompt Message */}
-                <View style={styles.chatBubbleUser}>
-                  <Text style={styles.chatBubbleSender}>👤 Spoken Input (User):</Text>
-                  <Text style={styles.chatBubbleText}>{transcript}</Text>
-                </View>
+                <TouchableOpacity
+                  style={[
+                    styles.flowTabItem,
+                    activeStep === "insights" && styles.flowTabItemActive,
+                  ]}
+                  onPress={() => setActiveStep("insights")}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.flowTabText,
+                      activeStep === "insights" && styles.flowTabTextActive,
+                    ]}
+                  >
+                    2. Insights & Graph
+                  </Text>
+                </TouchableOpacity>
 
-                {/* Coach Response Message */}
-                {coachingResult !== null ? (
-                  <View style={styles.chatBubbleCoach}>
-                    <View style={styles.coachHeaderRow}>
-                      <Text style={styles.chatBubbleCoachSender}>💡 LiveNudge Coaching Result</Text>
-                      <View style={styles.modeBadge}>
-                        <Text style={styles.modeBadgeText}>
+                <TouchableOpacity
+                  style={[
+                    styles.flowTabItem,
+                    activeStep === "complete" && styles.flowTabItemActive,
+                  ]}
+                  onPress={() => setActiveStep("complete")}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.flowTabText,
+                      activeStep === "complete" && styles.flowTabTextActive,
+                    ]}
+                  >
+                    3. Finish
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={styles.scrollArea} contentContainerStyle={styles.flowContentContainer}>
+                {/* ── STEP 1: RESULT SCREEN ──────────────────────────────── */}
+                {activeStep === "result" && (
+                  <View style={styles.stepContainer}>
+                    {/* Header with Mode */}
+                    <View style={styles.resultHeaderRow}>
+                      <Text style={styles.sectionHeaderTitle}>Coaching Result</Text>
+                      <View
+                        style={[
+                          styles.modeTagPill,
+                          { borderColor: getModeColor(coachingResult.mode) },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.modeTagPillText,
+                            { color: getModeColor(coachingResult.mode) },
+                          ]}
+                        >
                           {coachingResult.mode.toUpperCase()}
                         </Text>
                       </View>
                     </View>
 
-                    <Text style={styles.chatBubbleCoachText}>{coachingResult.nudge}</Text>
+                    {/* Primary Hero Nudge Card */}
+                    <View style={styles.nudgeHeroCard}>
+                      <Text style={styles.nudgeCardLabel}>PRIMARY NUDGE</Text>
+                      <Text style={styles.nudgeHeroText}>{coachingResult.nudge}</Text>
+                    </View>
 
+                    {/* Suggested Action Card */}
                     {coachingResult.suggestedAction !== "" && (
-                      <View style={styles.actionBox}>
-                        <Text style={styles.actionLabel}>🎯 Suggested Action:</Text>
-                        <Text style={styles.actionText}>{coachingResult.suggestedAction}</Text>
+                      <View style={styles.actionCard}>
+                        <Text style={styles.actionCardLabel}>SUGGESTED ACTION</Text>
+                        <Text style={styles.actionCardBody}>{coachingResult.suggestedAction}</Text>
                       </View>
                     )}
 
-                    {coachingResult.signals && coachingResult.signals.length > 0 && (
-                      <View style={styles.signalsContainer}>
-                        <Text style={styles.signalsLabel}>🔍 Observable Signals:</Text>
-                        <View style={styles.signalTagsRow}>
+                    {/* Observable Signals Card */}
+                    <View style={styles.signalsCard}>
+                      <Text style={styles.signalsCardLabel}>OBSERVED CONVERSATIONAL SIGNALS</Text>
+                      {coachingResult.signals && coachingResult.signals.length > 0 ? (
+                        <View style={styles.signalsListRow}>
                           {coachingResult.signals.map((sig, idx) => (
-                            <View key={idx} style={styles.signalTag}>
-                              <Text style={styles.signalTagText}>{sig}</Text>
+                            <View key={idx} style={styles.signalBadge}>
+                              <Text style={styles.signalBadgeText}>{sig}</Text>
                             </View>
                           ))}
                         </View>
-                      </View>
-                    )}
+                      ) : (
+                        <Text style={styles.emptySignalsText}>
+                          Clean delivery. No conversational friction signals observed.
+                        </Text>
+                      )}
+                    </View>
+
+                    {/* Spoken Transcript Accordion */}
+                    <View style={styles.transcriptCard}>
+                      <TouchableOpacity
+                        style={styles.transcriptToggleRow}
+                        onPress={() => setShowTranscript(!showTranscript)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.transcriptToggleLabel}>
+                          {showTranscript ? "Hide Spoken Transcript ▲" : "View Spoken Transcript ▼"}
+                        </Text>
+                        <Text style={styles.transcriptMetaText}>
+                          {transcript.split(/\s+/).filter(Boolean).length} words
+                        </Text>
+                      </TouchableOpacity>
+
+                      {showTranscript && (
+                        <ScrollView style={styles.transcriptScroll} nestedScrollEnabled={true}>
+                          <Text style={styles.transcriptBodyText}>{transcript}</Text>
+                        </ScrollView>
+                      )}
+                    </View>
+
+                    {/* Navigation Buttons */}
+                    <View style={styles.bottomActionArea}>
+                      <TouchableOpacity
+                        style={[styles.primaryActionBtn, styles.nextBtn]}
+                        onPress={() => setActiveStep("insights")}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.primaryActionBtnText}>View Session Insights →</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                ) : (
-                  isLoading && (
-                    <View style={styles.chatBubblePending}>
-                      <Text style={styles.chatBubblePendingText}>
-                        ⏳ Waiting for Sarvam 105b response...
+                )}
+
+                {/* ── STEP 2: INSIGHTS SCREEN (Score + Graph + Summary) ─────────── */}
+                {activeStep === "insights" && sessionInsights && (
+                  <View style={styles.stepContainer}>
+                    <View style={styles.insightsHeader}>
+                      <Text style={styles.sectionHeaderTitle}>Session Insights</Text>
+                      <Text style={styles.sectionHeaderSub}>
+                        Deterministic evaluation derived from real conversation data
                       </Text>
                     </View>
-                  )
+
+                    {/* Concise Session Summary Card */}
+                    <View style={styles.sessionSummaryCard}>
+                      <Text style={styles.sessionSummaryHeader}>CONCISE SESSION SUMMARY</Text>
+                      <View style={styles.summaryStatsRow}>
+                        <View style={styles.summaryStatBox}>
+                          <Text style={styles.summaryStatLabel}>DURATION</Text>
+                          <Text style={styles.summaryStatVal}>
+                            {sessionDurationRef.current || recordingDuration}s
+                          </Text>
+                        </View>
+                        <View style={styles.summaryStatBox}>
+                          <Text style={styles.summaryStatLabel}>WORDS SPOKEN</Text>
+                          <Text style={styles.summaryStatVal}>
+                            {transcript.split(/\s+/).filter(Boolean).length}
+                          </Text>
+                        </View>
+                        <View style={styles.summaryStatBox}>
+                          <Text style={styles.summaryStatLabel}>COACHING MODE</Text>
+                          <Text
+                            style={[
+                              styles.summaryStatVal,
+                              { color: getModeColor(coachingResult.mode) },
+                            ]}
+                          >
+                            {coachingResult.mode.toUpperCase()}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.sessionSummaryNote}>
+                        {coachingResult.signals && coachingResult.signals.length > 0
+                          ? `Friction signals detected: ${coachingResult.signals.join(", ")}. Immediate focus: ${coachingResult.suggestedAction || coachingResult.nudge}`
+                          : `Clean conversational delivery. Aligned with ${coachingResult.mode} objectives without observed disfluencies.`}
+                      </Text>
+                    </View>
+
+                    {/* Score Card */}
+                    <View style={styles.scoreHeroCard}>
+                      <View style={styles.scoreNumberCol}>
+                        <Text style={styles.scoreBigNumber}>{sessionInsights.score}</Text>
+                        <Text style={styles.scoreTotalDenominator}>/100</Text>
+                      </View>
+                      <View style={styles.scoreMetaCol}>
+                        <View style={styles.scoreLabelPill}>
+                          <Text style={styles.scoreLabelPillText}>
+                            {sessionInsights.scoreLabel}
+                          </Text>
+                        </View>
+                        <Text style={styles.scoreSummaryDesc}>
+                          {sessionInsights.score >= 80
+                            ? "High conversational efficacy and fluency."
+                            : sessionInsights.score >= 60
+                            ? "Solid clarity with addressable friction."
+                            : "Noticeable disfluencies or pace variance."}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Score Factors Breakdown */}
+                    <View style={styles.factorsCard}>
+                      <Text style={styles.factorsCardHeader}>DETERMINISTIC SCORE FACTORS</Text>
+                      {sessionInsights.scoreFactors.map((item, idx) => (
+                        <View key={idx} style={styles.factorRow}>
+                          <View style={styles.factorLeft}>
+                            <Text style={styles.factorTitle}>{item.factor}</Text>
+                            <Text style={styles.factorDesc}>{item.description}</Text>
+                          </View>
+                          <View
+                            style={[
+                              styles.factorImpactBadge,
+                              item.impact < 0 ? styles.impactNegative : styles.impactNeutral,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.factorImpactText,
+                                item.impact < 0
+                                  ? styles.impactTextNegative
+                                  : styles.impactTextNeutral,
+                              ]}
+                            >
+                              {item.impact === 0 ? "Optimal" : `${item.impact} pts`}
+                            </Text>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+
+                    {/* Conversation Graph Card */}
+                    <View style={styles.graphCard}>
+                      <View style={styles.graphCardHeader}>
+                        <View>
+                          <Text style={styles.graphTitle}>Conversation Graph</Text>
+                          <Text style={styles.graphSubtitle}>
+                            {sessionInsights.graph.nodes.length} Nodes •{" "}
+                            {sessionInsights.graph.relationships.length} Relationships
+                          </Text>
+                        </View>
+                      </View>
+
+                      {/* Graph Nodes */}
+                      <Text style={styles.graphSubheading}>CONVERSATION ENTITIES</Text>
+                      <View style={styles.graphNodesGrid}>
+                        {sessionInsights.graph.nodes.map((node) => (
+                          <View key={node.id} style={styles.graphNodeChip}>
+                            <Text style={styles.graphNodeType}>{node.type.toUpperCase()}</Text>
+                            <Text style={styles.graphNodeLabel} numberOfLines={1}>
+                              {node.label}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+
+                      {/* Graph Relationships */}
+                      <Text style={[styles.graphSubheading, { marginTop: 16 }]}>
+                        SEMANTIC RELATIONSHIPS
+                      </Text>
+                      <ScrollView style={styles.graphRelsScroll} nestedScrollEnabled={true}>
+                        {sessionInsights.graph.relationships.map((rel) => (
+                          <View key={rel.id} style={styles.graphRelRow}>
+                            <Text style={styles.graphRelSource} numberOfLines={1}>
+                              {rel.source.replace("node_", "")}
+                            </Text>
+                            <View style={styles.graphRelArrowBadge}>
+                              <Text style={styles.graphRelType}>--[{rel.type}]--&gt;</Text>
+                            </View>
+                            <Text style={styles.graphRelTarget} numberOfLines={1}>
+                              {rel.target.replace("node_", "")}
+                            </Text>
+                          </View>
+                        ))}
+                      </ScrollView>
+                    </View>
+
+                    {/* Navigation Buttons */}
+                    <View style={styles.bottomActionArea}>
+                      <TouchableOpacity
+                        style={[styles.primaryActionBtn, styles.nextBtn]}
+                        onPress={() => setActiveStep("complete")}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.primaryActionBtnText}>Next: Complete Session →</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.secondaryTextBtn}
+                        onPress={() => setActiveStep("result")}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.secondaryTextBtnLabel}>← Back to Nudge</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
                 )}
-              </View>
-            )}
 
-            {/* ── Action Buttons ─────────────────────────────────────────── */}
-            <View style={styles.actionContainer}>
-              {phase === "idle" && (
-                <TouchableOpacity
-                  style={[styles.primaryButton, styles.recordButton]}
-                  onPress={startRecording}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.primaryButtonText}>🎙️ Tap to Record</Text>
-                </TouchableOpacity>
-              )}
+                {/* ── STEP 3: COMPLETE SCREEN ────────────────────────────── */}
+                {activeStep === "complete" && (
+                  <View style={styles.stepContainer}>
+                    <View style={styles.completeHeader}>
+                      <View style={styles.completeCheckmarkBadge}>
+                        <Text style={styles.completeCheckmarkText}>✓</Text>
+                      </View>
+                      <Text style={styles.completeTitle}>Conversation Complete</Text>
+                      <Text style={styles.completeSub}>
+                        Your speech session has been evaluated, scored, and saved locally.
+                      </Text>
+                    </View>
 
-              {phase === "recording" && (
-                <TouchableOpacity
-                  style={[styles.primaryButton, styles.stopButton]}
-                  onPress={stopRecording}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.primaryButtonText}>
-                    ⏹️ Tap to End Recording ({recordingDuration}s)
-                  </Text>
-                </TouchableOpacity>
-              )}
+                    {/* Summary Card */}
+                    <View style={styles.completeSummaryCard}>
+                      <View style={styles.summaryMetaGrid}>
+                        <View style={styles.summaryMetaItem}>
+                          <Text style={styles.summaryMetaLabel}>SCORE</Text>
+                          <Text style={styles.summaryMetaVal}>
+                            {sessionInsights?.score ?? "—"}/100
+                          </Text>
+                        </View>
+                        <View style={styles.summaryMetaItem}>
+                          <Text style={styles.summaryMetaLabel}>MODE</Text>
+                          <Text
+                            style={[
+                              styles.summaryMetaVal,
+                              { color: getModeColor(coachingResult.mode) },
+                            ]}
+                          >
+                            {coachingResult.mode.toUpperCase()}
+                          </Text>
+                        </View>
+                        <View style={styles.summaryMetaItem}>
+                          <Text style={styles.summaryMetaLabel}>DURATION</Text>
+                          <Text style={styles.summaryMetaVal}>
+                            {sessionDurationRef.current || recordingDuration}s
+                          </Text>
+                        </View>
+                      </View>
 
-              {(phase === "done" || phase === "error") && (
-                <TouchableOpacity
-                  style={[styles.primaryButton, styles.resetButton]}
-                  onPress={handleReset}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.primaryButtonText}>↺ Record Another Nudge</Text>
-                </TouchableOpacity>
-              )}
+                      <View style={styles.summaryDivider} />
+
+                      <Text style={styles.summaryNudgeLabel}>KEY TAKEAWAY</Text>
+                      <Text style={styles.summaryNudgeText}>{coachingResult.nudge}</Text>
+                    </View>
+
+                    {/* Bottom Actions */}
+                    <View style={styles.bottomActionArea}>
+                      <TouchableOpacity
+                        style={[styles.primaryActionBtn, styles.startBtn]}
+                        onPress={handleReset}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.primaryActionBtnText}>Start New Conversation</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.secondaryActionBtn}
+                        onPress={() => setActiveStep("insights")}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.secondaryActionBtnText}>View Insights</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              </ScrollView>
             </View>
-          </ScrollView>
+          )}
         </KeyboardAvoidingView>
       </SafeAreaView>
     </SafeAreaProvider>
   );
 }
 
-// ─── Styles ──────────────────────────────────────────────────────────────────
+// ─── Design System Styles ───────────────────────────────────────────────────
+// Follows strict 4pt/8pt spacing, dark layered surfaces (#0f172a, #1e293b, #334155),
+// accessible typography, standard Android touch targets, and natural thumb reach.
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#f7f9fa",
+    backgroundColor: "#0f172a",
   },
   container: {
     flex: 1,
   },
-  scrollView: {
+  scrollArea: {
     flex: 1,
   },
-  scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 40,
+
+  // ── Top Nav ───────────────────────────────────────────────────────────────
+  topNav: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1e293b",
   },
-  header: {
+  brandTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#f8fafc",
+    letterSpacing: -0.5,
+  },
+  brandSubtitle: {
+    fontSize: 11,
+    fontWeight: "500",
+    color: "#94a3b8",
+    marginTop: 1,
+  },
+  configToggleBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: "#1e293b",
+    borderWidth: 1,
+    borderColor: "#334155",
+  },
+  configToggleText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#38bdf8",
+  },
+
+  // ── Error Banner ──────────────────────────────────────────────────────────
+  errorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#450a0a",
+    borderColor: "#b91c1c",
+    borderWidth: 1,
+    borderRadius: 10,
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 12,
+  },
+  errorContent: {
+    flex: 1,
+    marginRight: 10,
+  },
+  errorTitle: {
+    color: "#fca5a5",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  errorBody: {
+    color: "#fecaca",
+    fontSize: 12,
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  errorDismissBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: "#7f1d1d",
+    borderRadius: 6,
+  },
+  errorDismissText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+
+  // ── Config Modal / Overlay ────────────────────────────────────────────────
+  configModalOverlay: {
+    position: "absolute",
+    top: 60,
+    left: 16,
+    right: 16,
+    zIndex: 99,
+  },
+  configModalCard: {
+    backgroundColor: "#1e293b",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#475569",
+    padding: 16,
+    maxHeight: 400,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  configModalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 12,
   },
-  appTitle: {
-    fontSize: 28,
-    fontWeight: "800",
-    color: "#111827",
-    letterSpacing: -0.5,
-  },
-  appSubtitle: {
-    fontSize: 14,
-    color: "#6b7280",
-    marginTop: 2,
-  },
-  statusBanner: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-    marginBottom: 14,
-    alignItems: "center",
-  },
-  statusBannerText: {
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  configCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    marginBottom: 14,
-    overflow: "hidden",
-  },
-  configHeader: {
-    padding: 12,
-    backgroundColor: "#f9fafb",
-  },
-  configHeaderTitle: {
-    fontSize: 14,
+  configModalTitle: {
+    fontSize: 15,
     fontWeight: "700",
-    color: "#1f2937",
+    color: "#f8fafc",
   },
-  configHeaderSubtitle: {
-    fontSize: 12,
-    color: "#6b7280",
-    marginTop: 2,
+  configModalClose: {
+    fontSize: 16,
+    color: "#94a3b8",
+    padding: 4,
   },
-  configBody: {
-    padding: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#e5e7eb",
+  configModalScroll: {
+    maxHeight: 320,
   },
   inputGroup: {
     marginBottom: 12,
   },
   inputLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "600",
-    color: "#374151",
+    color: "#94a3b8",
     marginBottom: 4,
   },
   textInput: {
-    backgroundColor: "#f9fafb",
+    backgroundColor: "#0f172a",
     borderWidth: 1,
-    borderColor: "#d1d5db",
+    borderColor: "#334155",
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
     fontSize: 13,
-    color: "#111827",
+    color: "#f8fafc",
   },
-  inputHint: {
-    fontSize: 11,
-    color: "#9ca3af",
-    marginTop: 3,
+
+  // ── VIEW 1: HOME ──────────────────────────────────────────────────────────
+  homeContainer: {
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 40,
   },
-  errorCard: {
-    backgroundColor: "#fef2f2",
-    borderColor: "#f87171",
-    borderWidth: 1,
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 14,
+  homeHero: {
+    marginBottom: 24,
   },
-  errorTitle: {
-    color: "#991b1b",
-    fontWeight: "700",
-    fontSize: 14,
-    marginBottom: 4,
-  },
-  errorBody: {
-    color: "#b91c1c",
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  loadingCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 10,
-    padding: 20,
-    alignItems: "center",
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  loadingText: {
-    fontSize: 13,
-    color: "#4b5563",
-    marginTop: 10,
-    fontWeight: "500",
-    textAlign: "center",
-  },
-  card: {
-    backgroundColor: "#ffffff",
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  cardHeaderRow: {
+  heroBadge: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 10,
-  },
-  cardSectionBadge: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#4b5563",
-    letterSpacing: 0.5,
-  },
-  cardModelTag: {
-    fontSize: 11,
-    color: "#9ca3af",
-    fontWeight: "500",
-  },
-  transcriptText: {
-    fontSize: 15,
-    color: "#1f2937",
-    lineHeight: 22,
-  },
-  chatCard: {
-    borderColor: "#bbf7d0",
-    backgroundColor: "#fcfdfc",
-  },
-  chatBadge: {
-    color: "#166534",
-  },
-  chatBubbleUser: {
-    backgroundColor: "#f3f4f6",
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 10,
-  },
-  chatBubbleSender: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#4b5563",
-    marginBottom: 3,
-  },
-  chatBubbleText: {
-    fontSize: 14,
-    color: "#1f2937",
-    lineHeight: 20,
-  },
-  chatBubbleCoach: {
-    backgroundColor: "#ecfdf5",
+    alignSelf: "flex-start",
+    backgroundColor: "#1e293b",
     borderWidth: 1,
-    borderColor: "#a7f3d0",
-    borderRadius: 8,
-    padding: 12,
+    borderColor: "#334155",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+    marginBottom: 12,
   },
-  chatBubbleCoachSender: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#065f46",
-    marginBottom: 4,
+  heroBadgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#10b981",
+    marginRight: 6,
   },
-  chatBubbleCoachText: {
-    fontSize: 15,
-    color: "#064e3b",
-    lineHeight: 22,
-    fontWeight: "500",
-  },
-  coachHeaderRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 6,
-  },
-  modeBadge: {
-    backgroundColor: "#d1fae5",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: "#6ee7b7",
-  },
-  modeBadgeText: {
+  heroBadgeText: {
     fontSize: 10,
     fontWeight: "700",
-    color: "#065f46",
+    color: "#94a3b8",
     letterSpacing: 0.5,
   },
-  actionBox: {
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: "#a7f3d0",
+  heroHeading: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: "#f8fafc",
+    lineHeight: 34,
+    letterSpacing: -0.5,
+    marginBottom: 8,
   },
-  actionLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#047857",
-    marginBottom: 2,
+  heroSubhead: {
+    fontSize: 14,
+    color: "#94a3b8",
+    lineHeight: 20,
   },
-  actionText: {
-    fontSize: 13,
-    color: "#065f46",
-    lineHeight: 18,
-  },
-  signalsContainer: {
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: "#a7f3d0",
-  },
-  signalsLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#047857",
-    marginBottom: 4,
-  },
-  signalTagsRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-  },
-  signalTag: {
-    backgroundColor: "#ffffff",
+  featuresCard: {
+    backgroundColor: "#1e293b",
+    borderRadius: 14,
+    padding: 16,
     borderWidth: 1,
-    borderColor: "#a7f3d0",
-    borderRadius: 4,
+    borderColor: "#334155",
+    marginBottom: 20,
+  },
+  featureRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  featureIcon: {
+    fontSize: 20,
+    marginRight: 14,
+  },
+  featureTextCol: {
+    flex: 1,
+  },
+  featureTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#f8fafc",
+  },
+  featureDesc: {
+    fontSize: 12,
+    color: "#94a3b8",
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  featureDivider: {
+    height: 1,
+    backgroundColor: "#334155",
+    marginVertical: 12,
+  },
+  recentCard: {
+    backgroundColor: "#1e293b",
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#334155",
+    marginBottom: 24,
+  },
+  recentSectionTitle: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#64748b",
+    letterSpacing: 0.5,
+    marginBottom: 12,
+  },
+  recentItemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#334155",
+  },
+  recentItemLeft: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    marginRight: 10,
+  },
+  recentModePill: {
     paddingHorizontal: 6,
     paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    marginRight: 8,
   },
-  signalTagText: {
-    fontSize: 11,
-    color: "#065f46",
+  recentModePillText: {
+    fontSize: 9,
+    fontWeight: "700",
   },
-  chatBubblePending: {
-    padding: 10,
+  recentNudgePreview: {
+    flex: 1,
+    fontSize: 12,
+    color: "#cbd5e1",
+  },
+  recentDurationText: {
+    fontSize: 12,
+    color: "#64748b",
+    fontWeight: "600",
+  },
+
+  // ── VIEW 2: RECORDING ─────────────────────────────────────────────────────
+  recordingContainer: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingTop: 32,
+    paddingBottom: 40,
+    justifyContent: "space-between",
+  },
+  recordingHeader: {
     alignItems: "center",
   },
-  chatBubblePendingText: {
+  recordingPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#450a0a",
+    borderColor: "#ef4444",
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  recordingPillDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#ef4444",
+    marginRight: 8,
+  },
+  recordingPillText: {
+    color: "#fca5a5",
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
+  timerBlock: {
+    alignItems: "center",
+    marginVertical: 24,
+  },
+  timerText: {
+    fontSize: 56,
+    fontWeight: "800",
+    color: "#f8fafc",
+    fontVariant: ["tabular-nums"],
+    letterSpacing: 2,
+  },
+  timerSubtext: {
+    fontSize: 13,
+    color: "#94a3b8",
+    marginTop: 4,
+  },
+  listeningCard: {
+    backgroundColor: "#1e293b",
+    borderRadius: 14,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: "#334155",
+  },
+  listeningCardTitle: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#38bdf8",
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  listeningCardBody: {
+    fontSize: 14,
+    color: "#cbd5e1",
+    lineHeight: 20,
+    marginBottom: 16,
+  },
+  audioActiveRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  pulseBar: {
+    width: 3,
+    height: 12,
+    backgroundColor: "#38bdf8",
+    borderRadius: 2,
+  },
+  audioActiveText: {
     fontSize: 12,
-    color: "#6b7280",
+    color: "#64748b",
+    marginLeft: 8,
+  },
+
+  // ── VIEW 3: PROCESSING ────────────────────────────────────────────────────
+  processingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+  },
+  processingCard: {
+    backgroundColor: "#1e293b",
+    borderRadius: 16,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: "#334155",
+    alignItems: "center",
+  },
+  processingSpinner: {
+    marginBottom: 16,
+  },
+  processingTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#f8fafc",
+    marginBottom: 6,
+  },
+  processingSubhead: {
+    fontSize: 13,
+    color: "#94a3b8",
+    textAlign: "center",
+    lineHeight: 18,
+    marginBottom: 24,
+  },
+  pipelineSteps: {
+    width: "100%",
+    backgroundColor: "#0f172a",
+    borderRadius: 10,
+    padding: 14,
+  },
+  stepItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: 6,
+  },
+  stepBullet: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 10,
+  },
+  stepBulletActive: {
+    backgroundColor: "#38bdf8",
+  },
+  stepBulletDone: {
+    backgroundColor: "#10b981",
+  },
+  stepBulletPending: {
+    backgroundColor: "#334155",
+  },
+  stepLabel: {
+    fontSize: 12,
+    color: "#64748b",
+  },
+  stepLabelActive: {
+    color: "#f8fafc",
+    fontWeight: "700",
+  },
+
+  // ── VIEW 4, 5, 6: COMPLETED FLOW WRAPPER ──────────────────────────────────
+  completedFlowWrapper: {
+    flex: 1,
+  },
+  flowTabsRow: {
+    flexDirection: "row",
+    backgroundColor: "#0f172a",
+    borderBottomWidth: 1,
+    borderBottomColor: "#1e293b",
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+  },
+  flowTabItem: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: "center",
+    borderRadius: 8,
+  },
+  flowTabItemActive: {
+    backgroundColor: "#1e293b",
+  },
+  flowTabText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#64748b",
+  },
+  flowTabTextActive: {
+    color: "#38bdf8",
+    fontWeight: "700",
+  },
+  flowContentContainer: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 40,
+  },
+  stepContainer: {
+    width: "100%",
+  },
+  sectionHeaderTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#f8fafc",
+    letterSpacing: -0.5,
+  },
+  sectionHeaderSub: {
+    fontSize: 12,
+    color: "#94a3b8",
+    marginTop: 2,
+  },
+
+  // ── RESULT SCREEN SPECIFICS ───────────────────────────────────────────────
+  resultHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  modeTagPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  modeTagPillText: {
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  nudgeHeroCard: {
+    backgroundColor: "#1e293b",
+    borderRadius: 14,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "#38bdf8",
+    marginBottom: 14,
+  },
+  nudgeCardLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#38bdf8",
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  nudgeHeroText: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#f8fafc",
+    lineHeight: 26,
+  },
+  actionCard: {
+    backgroundColor: "#1e293b",
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#334155",
+    marginBottom: 14,
+  },
+  actionCardLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#10b981",
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  actionCardBody: {
+    fontSize: 14,
+    color: "#e2e8f0",
+    lineHeight: 20,
+    fontWeight: "500",
+  },
+  signalsCard: {
+    backgroundColor: "#1e293b",
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#334155",
+    marginBottom: 14,
+  },
+  signalsCardLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#94a3b8",
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  signalsListRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  signalBadge: {
+    backgroundColor: "#0f172a",
+    borderWidth: 1,
+    borderColor: "#475569",
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  signalBadgeText: {
+    fontSize: 12,
+    color: "#cbd5e1",
+    fontWeight: "500",
+  },
+  emptySignalsText: {
+    fontSize: 13,
+    color: "#94a3b8",
     fontStyle: "italic",
   },
-  actionContainer: {
-    marginTop: 10,
+  transcriptCard: {
+    backgroundColor: "#1e293b",
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#334155",
+    marginBottom: 16,
+  },
+  transcriptToggleRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
   },
-  primaryButton: {
+  transcriptToggleLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#38bdf8",
+  },
+  transcriptMetaText: {
+    fontSize: 11,
+    color: "#64748b",
+  },
+  transcriptScroll: {
+    maxHeight: 120,
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#334155",
+  },
+  transcriptBodyText: {
+    fontSize: 13,
+    color: "#cbd5e1",
+    lineHeight: 18,
+  },
+
+  // ── INSIGHTS SCREEN SPECIFICS ─────────────────────────────────────────────
+  insightsHeader: {
+    marginBottom: 16,
+  },
+  sessionSummaryCard: {
+    backgroundColor: "#1e293b",
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#334155",
+    marginBottom: 14,
+  },
+  sessionSummaryHeader: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#38bdf8",
+    letterSpacing: 0.5,
+    marginBottom: 12,
+  },
+  summaryStatsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  summaryStatBox: {
+    flex: 1,
+  },
+  summaryStatLabel: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: "#64748b",
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  summaryStatVal: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#f8fafc",
+  },
+  sessionSummaryNote: {
+    fontSize: 12,
+    color: "#cbd5e1",
+    lineHeight: 18,
+    borderTopWidth: 1,
+    borderTopColor: "#334155",
+    paddingTop: 10,
+  },
+  scoreHeroCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#1e293b",
+    borderRadius: 14,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "#334155",
+    marginBottom: 14,
+  },
+  scoreNumberCol: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    marginRight: 16,
+  },
+  scoreBigNumber: {
+    fontSize: 44,
+    fontWeight: "800",
+    color: "#f8fafc",
+  },
+  scoreTotalDenominator: {
+    fontSize: 16,
+    color: "#64748b",
+    fontWeight: "600",
+    marginLeft: 2,
+  },
+  scoreMetaCol: {
+    flex: 1,
+  },
+  scoreLabelPill: {
+    alignSelf: "flex-start",
+    backgroundColor: "#0f172a",
+    borderWidth: 1,
+    borderColor: "#38bdf8",
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    marginBottom: 4,
+  },
+  scoreLabelPillText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#38bdf8",
+  },
+  scoreSummaryDesc: {
+    fontSize: 12,
+    color: "#94a3b8",
+    lineHeight: 16,
+  },
+  factorsCard: {
+    backgroundColor: "#1e293b",
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#334155",
+    marginBottom: 14,
+  },
+  factorsCardHeader: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#64748b",
+    letterSpacing: 0.5,
+    marginBottom: 12,
+  },
+  factorRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#334155",
+  },
+  factorLeft: {
+    flex: 1,
+    marginRight: 12,
+  },
+  factorTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#f8fafc",
+  },
+  factorDesc: {
+    fontSize: 11,
+    color: "#94a3b8",
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  factorImpactBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  impactNegative: {
+    backgroundColor: "#450a0a",
+  },
+  impactNeutral: {
+    backgroundColor: "#064e3b",
+  },
+  factorImpactText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  impactTextNegative: {
+    color: "#f87171",
+  },
+  impactTextNeutral: {
+    color: "#34d399",
+  },
+  graphCard: {
+    backgroundColor: "#1e293b",
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#334155",
+    marginBottom: 16,
+  },
+  graphCardHeader: {
+    marginBottom: 12,
+  },
+  graphTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#f8fafc",
+  },
+  graphSubtitle: {
+    fontSize: 12,
+    color: "#64748b",
+    marginTop: 1,
+  },
+  graphSubheading: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#94a3b8",
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  graphNodesGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  graphNodeChip: {
+    backgroundColor: "#0f172a",
+    borderWidth: 1,
+    borderColor: "#334155",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    maxWidth: "48%",
+  },
+  graphNodeType: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: "#38bdf8",
+  },
+  graphNodeLabel: {
+    fontSize: 11,
+    color: "#cbd5e1",
+    marginTop: 1,
+  },
+  graphRelsScroll: {
+    maxHeight: 140,
+    backgroundColor: "#0f172a",
+    borderRadius: 8,
+    padding: 8,
+  },
+  graphRelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1e293b",
+  },
+  graphRelSource: {
+    fontSize: 11,
+    color: "#94a3b8",
+    maxWidth: "32%",
+  },
+  graphRelArrowBadge: {
+    backgroundColor: "#1e293b",
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  graphRelType: {
+    fontSize: 9,
+    color: "#38bdf8",
+    fontWeight: "700",
+  },
+  graphRelTarget: {
+    fontSize: 11,
+    color: "#cbd5e1",
+    maxWidth: "32%",
+    textAlign: "right",
+  },
+
+  // ── COMPLETE SCREEN SPECIFICS ─────────────────────────────────────────────
+  completeHeader: {
+    alignItems: "center",
+    marginBottom: 20,
+    paddingTop: 8,
+  },
+  completeCheckmarkBadge: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "#064e3b",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#10b981",
+  },
+  completeCheckmarkText: {
+    fontSize: 24,
+    color: "#10b981",
+    fontWeight: "800",
+  },
+  completeTitle: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: "#f8fafc",
+    marginBottom: 6,
+  },
+  completeSub: {
+    fontSize: 13,
+    color: "#94a3b8",
+    textAlign: "center",
+    lineHeight: 18,
+    paddingHorizontal: 16,
+  },
+  completeSummaryCard: {
+    backgroundColor: "#1e293b",
+    borderRadius: 14,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "#334155",
+    marginBottom: 24,
+  },
+  summaryMetaGrid: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+  },
+  summaryMetaItem: {
+    alignItems: "center",
+  },
+  summaryMetaLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#64748b",
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  summaryMetaVal: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#f8fafc",
+  },
+  summaryDivider: {
+    height: 1,
+    backgroundColor: "#334155",
+    marginVertical: 14,
+  },
+  summaryNudgeLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#38bdf8",
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  summaryNudgeText: {
+    fontSize: 14,
+    color: "#cbd5e1",
+    lineHeight: 20,
+    fontStyle: "italic",
+  },
+
+  // ── ACTION BUTTONS & THUMB REACH ──────────────────────────────────────────
+  bottomActionArea: {
+    marginTop: 8,
     width: "100%",
-    paddingVertical: 16,
-    borderRadius: 30,
+  },
+  primaryActionBtn: {
+    width: "100%",
+    minHeight: 52,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 28,
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.25,
     shadowRadius: 4,
-    elevation: 2,
+    elevation: 4,
   },
-  recordButton: {
-    backgroundColor: "#111827",
+  primaryActionBtnText: {
+    color: "#ffffff",
+    fontSize: 15,
+    fontWeight: "700",
+    letterSpacing: -0.2,
   },
-  stopButton: {
+  startBtn: {
+    backgroundColor: "#0284c7",
+  },
+  endRecordingBtn: {
     backgroundColor: "#dc2626",
   },
-  resetButton: {
-    backgroundColor: "#2563eb",
+  nextBtn: {
+    backgroundColor: "#0284c7",
   },
-  primaryButtonText: {
-    color: "#ffffff",
-    fontSize: 16,
-    fontWeight: "700",
+  secondaryActionBtn: {
+    width: "100%",
+    minHeight: 48,
+    paddingVertical: 12,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#1e293b",
+    borderWidth: 1,
+    borderColor: "#334155",
+    marginTop: 10,
+  },
+  secondaryActionBtnText: {
+    color: "#cbd5e1",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  secondaryTextBtn: {
+    alignItems: "center",
+    paddingVertical: 10,
+    marginTop: 6,
+  },
+  secondaryTextBtnLabel: {
+    fontSize: 13,
+    color: "#94a3b8",
+    fontWeight: "600",
   },
 });
