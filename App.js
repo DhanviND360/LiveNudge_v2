@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
+import { Ionicons, Feather } from "@expo/vector-icons";
 import {
   useAudioRecorder,
   AudioModule,
@@ -528,17 +529,23 @@ export default function App() {
           {/* ── TOP NAV BAR ───────────────────────────────────────────────── */}
           <View style={styles.topNav}>
             <View>
-              <Text style={styles.brandTitle}>LiveNudge</Text>
-              <Text style={styles.brandSubtitle}>AI Communication Coach</Text>
+              <Text style={styles.brandTitle}>
+                <Text style={styles.brandTitleWhite}>Live </Text>
+                <Text style={styles.brandTitleBlue}>Nudge</Text>
+              </Text>
+              <Text style={styles.brandSubtitleTracked}>
+                BETTER CONVERSATIONS{"\n"}A BRIGHTER YOU
+              </Text>
             </View>
 
-            {/* Quick Config Toggle */}
+            {/* Settings Gear Toggle */}
             <TouchableOpacity
-              style={styles.configToggleBtn}
+              style={styles.settingsIconBtn}
               onPress={() => setShowConfig(!showConfig)}
               activeOpacity={0.7}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             >
-              <Text style={styles.configToggleText}>{showConfig ? "Done" : "Settings"}</Text>
+              <Ionicons name="settings-outline" size={24} color="#9CA3AF" />
             </TouchableOpacity>
           </View>
 
@@ -636,91 +643,64 @@ export default function App() {
               VIEW 1: HOME SCREEN (Idle Phase)
              ────────────────────────────────────────────────────────────────── */}
           {phase === "idle" && (
-            <ScrollView style={styles.scrollArea} contentContainerStyle={styles.homeContainer}>
-              <View style={styles.homeHero}>
-                <View style={styles.heroBadge}>
-                  <View style={styles.heroBadgeDot} />
-                  <Text style={styles.heroBadgeText}>READY TO LISTEN</Text>
-                </View>
-                <Text style={styles.heroHeading}>Communication coaching while you talk.</Text>
-                <Text style={styles.heroSubhead}>
-                  Speak freely in meetings, calls, or presentations. Get actionable delivery nudges,
-                  observable signals, and deterministic insights.
+            <ScrollView
+              style={styles.scrollArea}
+              contentContainerStyle={styles.homeContainer}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Hero Headline */}
+              <View style={styles.homeHeroSection}>
+                <Text style={styles.heroMainTitle}>
+                  <Text style={styles.heroWhiteText}>Have better{"\n"}</Text>
+                  <Text style={styles.heroBlueText}>conversations</Text>
+                </Text>
+                <Text style={styles.heroDescription}>
+                  LiveNudge listens to your conversation and gives real-time nudges to help you communicate better.
                 </Text>
               </View>
 
-              {/* Coaching Pillars */}
-              <View style={styles.featuresCard}>
-                <View style={styles.featureRow}>
-                  <Text style={styles.featureIcon}>🎙️</Text>
-                  <View style={styles.featureTextCol}>
-                    <Text style={styles.featureTitle}>Native Microphone Capture</Text>
-                    <Text style={styles.featureDesc}>Accurate real-time speech transcription via Sarvam STT.</Text>
-                  </View>
+              {/* Three Value Pillars */}
+              <View style={styles.pillarsRow}>
+                <View style={styles.pillarItem}>
+                  <Ionicons name="chatbubble-ellipses-outline" size={26} color="#9CA3AF" />
+                  <Text style={styles.pillarLabel}>Be more{"\n"}confident</Text>
                 </View>
-
-                <View style={styles.featureDivider} />
-
-                <View style={styles.featureRow}>
-                  <Text style={styles.featureIcon}>💡</Text>
-                  <View style={styles.featureTextCol}>
-                    <Text style={styles.featureTitle}>Zero-Latency Coaching</Text>
-                    <Text style={styles.featureDesc}>Sarvam 105b evaluates delivery without reasoning delays.</Text>
-                  </View>
+                <View style={styles.pillarItem}>
+                  <Ionicons name="person-circle-outline" size={28} color="#9CA3AF" />
+                  <Text style={styles.pillarLabel}>Speak{"\n"}more clearly</Text>
                 </View>
-
-                <View style={styles.featureDivider} />
-
-                <View style={styles.featureRow}>
-                  <Text style={styles.featureIcon}>📈</Text>
-                  <View style={styles.featureTextCol}>
-                    <Text style={styles.featureTitle}>Deterministic Scoring & Graph</Text>
-                    <Text style={styles.featureDesc}>Reproducible scores and relational conversation nodes.</Text>
-                  </View>
+                <View style={styles.pillarItem}>
+                  <Feather name="bar-chart-2" size={26} color="#9CA3AF" />
+                  <Text style={styles.pillarLabel}>Build stronger{"\n"}connections</Text>
                 </View>
               </View>
 
-              {/* Recent Sessions Preview */}
-              {recentSessions.length > 0 && (
-                <View style={styles.recentCard}>
-                  <Text style={styles.recentSectionTitle}>RECENT CONVERSATIONS</Text>
-                  {recentSessions.map((item, idx) => (
-                    <View key={item.sessionId || idx} style={styles.recentItemRow}>
-                      <View style={styles.recentItemLeft}>
-                        <View
-                          style={[
-                            styles.recentModePill,
-                            { borderColor: getModeColor(item.mode) },
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.recentModePillText,
-                              { color: getModeColor(item.mode) },
-                            ]}
-                          >
-                            {item.mode ? item.mode.toUpperCase() : "GENERAL"}
-                          </Text>
-                        </View>
-                        <Text style={styles.recentNudgePreview} numberOfLines={1}>
-                          {item.nudge || "Coaching summary"}
-                        </Text>
-                      </View>
-                      <Text style={styles.recentDurationText}>{item.duration}s</Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-
-              {/* Primary Action */}
-              <View style={styles.bottomActionArea}>
+              {/* Primary CTA Button */}
+              <View style={styles.ctaWrapper}>
                 <TouchableOpacity
-                  style={[styles.primaryActionBtn, styles.startBtn]}
+                  style={styles.startConversationBtn}
                   onPress={startRecording}
-                  activeOpacity={0.8}
+                  activeOpacity={0.85}
                 >
-                  <Text style={styles.primaryActionBtnText}>Start Conversation</Text>
+                  <Feather name="mic" size={22} color="#FFFFFF" style={styles.btnMicIcon} />
+                  <Text style={styles.startConversationBtnText}>Start Conversation</Text>
+                  <Feather name="chevron-right" size={22} color="#FFFFFF" style={styles.btnChevronIcon} />
                 </TouchableOpacity>
+
+                {/* Privacy / Security Notice */}
+                <View style={styles.securityRow}>
+                  <Feather name="lock" size={16} color="#8F97A4" style={styles.lockIcon} />
+                  <Text style={styles.securityText}>
+                    Your conversation is processed securely{"\n"}for this session only. Nothing is stored.
+                  </Text>
+                </View>
+              </View>
+
+              {/* Bottom Quote */}
+              <View style={styles.bottomQuoteContainer}>
+                <Text style={styles.bottomQuoteText}>
+                  “Better conversations{"\n"}create a brighter you.”
+                </Text>
               </View>
             </ScrollView>
           )}
@@ -1240,10 +1220,11 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#0f172a",
+    backgroundColor: "#0B0E14",
   },
   container: {
     flex: 1,
+    backgroundColor: "#0B0E14",
   },
   scrollArea: {
     flex: 1,
@@ -1253,36 +1234,33 @@ const styles = StyleSheet.create({
   topNav: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1e293b",
+    alignItems: "flex-start",
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    paddingBottom: 8,
   },
   brandTitle: {
-    fontSize: 20,
+    fontSize: 26,
     fontWeight: "800",
-    color: "#f8fafc",
     letterSpacing: -0.5,
   },
-  brandSubtitle: {
-    fontSize: 11,
-    fontWeight: "500",
-    color: "#94a3b8",
-    marginTop: 1,
+  brandTitleWhite: {
+    color: "#FFFFFF",
   },
-  configToggleBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: "#1e293b",
-    borderWidth: 1,
-    borderColor: "#334155",
+  brandTitleBlue: {
+    color: "#3B82F6",
   },
-  configToggleText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#38bdf8",
+  brandSubtitleTracked: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#6B7280",
+    letterSpacing: 2.2,
+    lineHeight: 14,
+    marginTop: 6,
+  },
+  settingsIconBtn: {
+    padding: 6,
+    marginTop: 2,
   },
 
   // ── Error Banner ──────────────────────────────────────────────────────────
@@ -1387,135 +1365,114 @@ const styles = StyleSheet.create({
 
   // ── VIEW 1: HOME ──────────────────────────────────────────────────────────
   homeContainer: {
-    paddingHorizontal: 20,
-    paddingTop: 24,
-    paddingBottom: 40,
+    paddingHorizontal: 24,
+    paddingTop: 28,
+    paddingBottom: 24,
+    flexGrow: 1,
+    justifyContent: "space-between",
   },
-  homeHero: {
+  homeHeroSection: {
     marginBottom: 24,
   },
-  heroBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    backgroundColor: "#1e293b",
-    borderWidth: 1,
-    borderColor: "#334155",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 20,
-    marginBottom: 12,
-  },
-  heroBadgeDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#10b981",
-    marginRight: 6,
-  },
-  heroBadgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#94a3b8",
-    letterSpacing: 0.5,
-  },
-  heroHeading: {
-    fontSize: 28,
+  heroMainTitle: {
+    fontSize: 42,
     fontWeight: "800",
-    color: "#f8fafc",
-    lineHeight: 34,
-    letterSpacing: -0.5,
-    marginBottom: 8,
+    lineHeight: 48,
+    letterSpacing: -1,
+    marginBottom: 16,
   },
-  heroSubhead: {
-    fontSize: 14,
-    color: "#94a3b8",
-    lineHeight: 20,
+  heroWhiteText: {
+    color: "#FFFFFF",
   },
-  featuresCard: {
-    backgroundColor: "#1e293b",
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#334155",
+  heroBlueText: {
+    color: "#3B82F6",
+  },
+  heroDescription: {
+    fontSize: 16,
+    color: "#8F97A4",
+    lineHeight: 24,
+    fontWeight: "400",
+  },
+  pillarsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginTop: 8,
+    marginBottom: 40,
+  },
+  pillarItem: {
+    flex: 1,
+    alignItems: "center",
+    paddingHorizontal: 4,
+  },
+  pillarLabel: {
+    fontSize: 13,
+    fontWeight: "500",
+    color: "#C5CBD5",
+    textAlign: "center",
+    lineHeight: 18,
+    marginTop: 10,
+  },
+  ctaWrapper: {
+    width: "100%",
     marginBottom: 20,
   },
-  featureRow: {
+  startConversationBtn: {
     flexDirection: "row",
     alignItems: "center",
+    backgroundColor: "#3B82F6",
+    borderRadius: 16,
+    height: 60,
+    paddingHorizontal: 20,
+    shadowColor: "#3B82F6",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 6,
   },
-  featureIcon: {
-    fontSize: 20,
+  btnMicIcon: {
     marginRight: 14,
   },
-  featureTextCol: {
+  startConversationBtnText: {
     flex: 1,
-  },
-  featureTitle: {
-    fontSize: 14,
+    fontSize: 18,
     fontWeight: "700",
-    color: "#f8fafc",
+    color: "#FFFFFF",
+    letterSpacing: -0.2,
   },
-  featureDesc: {
-    fontSize: 12,
-    color: "#94a3b8",
-    marginTop: 2,
-    lineHeight: 16,
+  btnChevronIcon: {
+    marginLeft: 8,
   },
-  featureDivider: {
-    height: 1,
-    backgroundColor: "#334155",
-    marginVertical: 12,
-  },
-  recentCard: {
-    backgroundColor: "#1e293b",
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#334155",
-    marginBottom: 24,
-  },
-  recentSectionTitle: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#64748b",
-    letterSpacing: 0.5,
-    marginBottom: 12,
-  },
-  recentItemRow: {
+  securityRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: "#334155",
+    justifyContent: "center",
+    marginTop: 18,
+    paddingHorizontal: 12,
   },
-  recentItemLeft: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
+  lockIcon: {
     marginRight: 10,
   },
-  recentModePill: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    borderWidth: 1,
-    marginRight: 8,
+  securityText: {
+    fontSize: 12.5,
+    color: "#7E8695",
+    lineHeight: 18,
+    textAlign: "left",
+    fontWeight: "400",
   },
-  recentModePillText: {
-    fontSize: 9,
-    fontWeight: "700",
+  bottomQuoteContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 16,
+    marginTop: 8,
   },
-  recentNudgePreview: {
-    flex: 1,
-    fontSize: 12,
-    color: "#cbd5e1",
-  },
-  recentDurationText: {
-    fontSize: 12,
-    color: "#64748b",
-    fontWeight: "600",
+  bottomQuoteText: {
+    fontSize: 13.5,
+    fontStyle: "italic",
+    color: "#4B5563",
+    textAlign: "center",
+    lineHeight: 20,
+    letterSpacing: 0.2,
   },
 
   // ── VIEW 2: RECORDING ─────────────────────────────────────────────────────
