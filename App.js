@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   StyleSheet,
   Text,
@@ -22,6 +22,7 @@ import {
 import { File } from "expo-file-system";
 import * as FileSystem from "expo-file-system/legacy";
 import Constants from "expo-constants";
+import { saveSession } from "./sessionStorage";
 
 // ─── Default Configuration ──────────────────────────────────────────────────
 const DEFAULT_API_KEY = Constants.expoConfig?.extra?.sarvamApiKey || "";
@@ -130,6 +131,11 @@ export default function App() {
   const [permGranted, setPermGranted] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
 
+  // ── Session Metadata Tracking ─────────────────────────────────────────────
+  const sessionStartedAtRef = useRef(null);
+  const sessionEndedAtRef = useRef(null);
+  const sessionDurationRef = useRef(0);
+
   // ── Expo Audio Recorder ───────────────────────────────────────────────────
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(audioRecorder);
@@ -204,6 +210,9 @@ export default function App() {
 
       await audioRecorder.prepareToRecordAsync();
       audioRecorder.record();
+      sessionStartedAtRef.current = new Date().toISOString();
+      sessionEndedAtRef.current = null;
+      sessionDurationRef.current = 0;
       setPhase("recording");
     } catch (err) {
       console.error("❌ [LiveNudge] Failed to start recording:", err);
@@ -220,6 +229,8 @@ export default function App() {
       console.log("========================================================");
 
       await audioRecorder.stop();
+      sessionEndedAtRef.current = new Date().toISOString();
+      sessionDurationRef.current = recordingDuration;
       const uri = audioRecorder.uri;
       console.log("📁 [LiveNudge] Audio file URI:", uri);
 
@@ -419,6 +430,20 @@ export default function App() {
 
       setCoachingResult(validatedResult);
       setPhase("done");
+
+      // ── Persist Completed Session Locally ──────────────────────────────────
+      saveSession({
+        startedAt: sessionStartedAtRef.current || new Date().toISOString(),
+        endedAt: sessionEndedAtRef.current || new Date().toISOString(),
+        duration: sessionDurationRef.current || recordingDuration || 0,
+        transcript: detectedTranscript,
+        nudge: validatedResult.nudge,
+        mode: validatedResult.mode,
+        signals: validatedResult.signals,
+        suggestedAction: validatedResult.suggestedAction,
+      }).catch((storageErr) => {
+        console.error("❌ [LiveNudge] Session persistence failed (in-memory flow preserved):", storageErr);
+      });
     } catch (err) {
       console.error("❌ [LiveNudge] Chat API / Validation Failure:", err);
       setErrorMsg("Coaching Error: " + (err.message || String(err)));
