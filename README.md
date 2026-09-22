@@ -45,3 +45,52 @@ API reference and examples are available in the filesystem docs: https://docs.ex
 ### Status: Resolved
 1. Replaced deprecated `getInfoAsync` with modern `File` API + `expo-file-system/legacy` fallback; file validation is non-blocking and verified `.m4a` URIs stream reliably into Sarvam STT.
 2. Replaced deprecated `SafeAreaView` with `react-native-safe-area-context` (`SafeAreaProvider` & `SafeAreaView`).
+3. Installed missing peer dependency `expo-asset` required by `expo-audio` (`21/21 expo-doctor` checks pass).
+
+---
+
+## How to Run on Mobile Device
+
+### Prerequisites
+1. Install **Expo Go** from Google Play Store (Android) or App Store (iOS).
+2. Connect your phone and PC to the same Wi-Fi network (or use Tunnel mode `--tunnel`).
+3. Ensure `.env` contains your valid `SARVAM_API_KEY`:
+   ```env
+   SARVAM_API_KEY=your_key_here
+   ```
+
+### Start Development Server
+```bash
+npx expo start
+```
+- For LAN connection: Scan the displayed QR code with the Expo Go app.
+- For Tunnel connection (if on different Wi-Fi or cellular):
+  ```bash
+  npx expo start --tunnel
+  ```
+
+---
+
+## Verified End-to-End Flow
+1. **Home Screen**: Tap **"Start Conversation"**.
+2. **Recording Screen**: Speak naturally for 5–20 seconds into the microphone. Timer tracks elapsed seconds.
+3. **End Conversation**: Tap **"End Conversation"**.
+4. **Processing Screen**: Real-time visual progress through:
+   - `Transcribing` (Sarvam STT `saaras:v3`)
+   - `Analyzing conversation` (Sarvam 105B reasoning)
+   - `Preparing your nudge`
+5. **Result Screen**: Displays:
+   - Communication Mode badge (e.g. `CLARITY`, `CONFIDENCE`, `EMPATHY`, `CONCISE_RESPONSE`)
+   - Primary actionable Nudge
+   - Suggested Action micro-step
+   - Observable Conversational Signals (or clean delivery notice)
+   - Collapsible Spoken Transcript accordion
+6. **Session Insights**:
+   - Concise Session Summary (duration, words spoken, focus mode, key takeaway)
+   - Deterministic Communication Score (e.g. `73/100 (Effective)`)
+   - Score Factor breakdown with specific point adjustments
+   - Relational Conversation Graph (Entities & Semantic Relationships)
+7. **Complete Screen**:
+   - Summary checkmark & compact score
+   - "View Insights" button
+   - "Start New Conversation" button (resets state cleanly for next run)
