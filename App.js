@@ -30,12 +30,87 @@ const DEFAULT_STT_MODEL = "saaras:v3";
 const DEFAULT_CHAT_URL = "https://api.sarvam.ai/v1/chat/completions";
 const DEFAULT_CHAT_MODEL = "sarvam-105b-conversations";
 
+const ALLOWED_MODES = [
+  "clarity",
+  "empathy",
+  "confidence",
+  "listening",
+  "tone",
+  "concise_response",
+];
+
 const SYSTEM_PROMPT =
-  "You are LiveNudge, a concise real-time communication coach. " +
-  "The user will give you a transcript of something they just said aloud. " +
-  "Respond with ONLY a short, actionable coaching nudge (1-3 sentences). " +
-  "Do NOT repeat the transcript. Do NOT explain your reasoning. " +
-  "Focus on delivery, clarity, filler-word reduction, or persuasion improvement.";
+  "You are LiveNudge, an AI real-time communication coach.\n" +
+  "Analyze the provided transcript of spoken audio and output ONLY a valid JSON object matching this exact schema:\n" +
+  "{\n" +
+  '  "nudge": "<concise actionable coaching nudge, 1-2 sentences>",\n' +
+  '  "mode": "<strictly one of: clarity, empathy, confidence, listening, tone, concise_response>",\n' +
+  '  "signals": ["<observable conversational signals from transcript, e.g. filler words, rushed pace, hedge words>"],\n' +
+  '  "suggestedAction": "<concrete micro-action for immediate improvement>"\n' +
+  "}\n" +
+  "Strict constraints:\n" +
+  "- Return ONLY the raw JSON object. Never return markdown code blocks, backticks, commentary, preamble, or explanations.\n" +
+  "- Never include chain-of-thought, reasoning_content, or internal reasoning.\n" +
+  "- Do not fabricate signals when the transcript does not support them; use an empty array [] if none are observed.\n" +
+  "- If any field cannot be reliably produced, use an empty string \"\" or empty array [].\n" +
+  "- 'mode' MUST be one of: clarity, empathy, confidence, listening, tone, concise_response.";
+
+function extractJson(text) {
+  if (!text || typeof text !== "string") return "";
+  const trimmed = text.trim();
+  const codeBlockMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  if (codeBlockMatch) {
+    return codeBlockMatch[1].trim();
+  }
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start !== -1 && end !== -1 && end > start) {
+    return trimmed.slice(start, end + 1).trim();
+  }
+  return trimmed;
+}
+
+function validateLiveNudgeResult(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("Model response is not a valid JSON object.");
+  }
+
+  // nudge: must be string
+  if (typeof raw.nudge !== "string") {
+    throw new Error("Missing or invalid 'nudge' field (expected string).");
+  }
+
+  // mode: must be one of allowed modes
+  if (typeof raw.mode !== "string") {
+    throw new Error("Missing or invalid 'mode' field (expected string).");
+  }
+  const normalizedMode = raw.mode.trim().toLowerCase();
+  if (!ALLOWED_MODES.includes(normalizedMode)) {
+    throw new Error(
+      `Invalid 'mode': "${raw.mode}". Mode must be one of: ${ALLOWED_MODES.join(", ")}.`
+    );
+  }
+
+  // signals: must be an array of strings
+  if (!Array.isArray(raw.signals)) {
+    throw new Error("Invalid 'signals' field (expected array).");
+  }
+  const validSignals = raw.signals
+    .filter((s) => typeof s === "string" && s.trim().length > 0)
+    .map((s) => s.trim());
+
+  // suggestedAction: must be string
+  if (typeof raw.suggestedAction !== "string") {
+    throw new Error("Missing or invalid 'suggestedAction' field (expected string).");
+  }
+
+  return {
+    nudge: raw.nudge.trim(),
+    mode: normalizedMode,
+    signals: validSignals,
+    suggestedAction: raw.suggestedAction.trim(),
+  };
+}
 
 export default function App() {
   // ── Editable API Configuration State ───────────────────────────────────────
@@ -50,7 +125,7 @@ export default function App() {
   // phase: "idle" | "recording" | "transcribing" | "reasoning" | "done" | "error"
   const [phase, setPhase] = useState("idle");
   const [transcript, setTranscript] = useState("");
-  const [chatResponse, setChatResponse] = useState("");
+  const [coachingResult, setCoachingResult] = useState(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [permGranted, setPermGranted] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -104,7 +179,7 @@ export default function App() {
     console.log("↺ [LiveNudge] Resetting session state.");
     setPhase("idle");
     setTranscript("");
-    setChatResponse("");
+    setCoachingResult(null);
     setErrorMsg("");
     setRecordingDuration(0);
   }
@@ -289,8 +364,8 @@ export default function App() {
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: detectedTranscript },
         ],
-        max_tokens: 256,
-        temperature: 0.3,
+        max_tokens: 350,
+        temperature: 0.2,
         reasoning_effort: null,
       };
 
@@ -307,26 +382,47 @@ export default function App() {
 
       console.log("📥 [LiveNudge] SARVAM CHAT STATUS:", chatRes.status);
       const rawText = await chatRes.text();
-      console.log("📦 [LiveNudge] RAW CHAT RESPONSE:", rawText);
 
       if (!chatRes.ok) {
         throw new Error(`Chat API returned HTTP ${chatRes.status}: ${rawText}`);
       }
 
       const chatJson = JSON.parse(rawText);
-      const nudgeReply =
-        chatJson.choices?.[0]?.message?.content?.trim() || "(No response received from model)";
+
+      // Never inspect, display, or store reasoning_content or hidden chain-of-thought
+      const rawContent = chatJson.choices?.[0]?.message?.content?.trim() || "";
+
+      console.log("📦 [LiveNudge] RAW MODEL CONTENT:", rawContent);
+
+      if (!rawContent) {
+        throw new Error("Empty content received from Sarvam chat completion.");
+      }
+
+      // Extract JSON substring (stripping any accidental code fences)
+      let parsedObj;
+      try {
+        const jsonStr = extractJson(rawContent);
+        parsedObj = JSON.parse(jsonStr);
+      } catch (parseErr) {
+        throw new Error(
+          `Failed to parse model output as JSON: ${parseErr.message}. Output was: "${rawContent}"`
+        );
+      }
+
+      // Strictly validate result against LiveNudge contract
+      const validatedResult = validateLiveNudgeResult(parsedObj);
 
       console.log("\n========================================================");
-      console.log("💡 [LiveNudge] COACHING NUDGE RECEIVED:");
-      console.log(nudgeReply);
+      console.log("💡 [LiveNudge] VALIDATED COACHING CONTRACT RESULT:");
+      console.log(JSON.stringify(validatedResult, null, 2));
       console.log("========================================================\n");
 
-      setChatResponse(nudgeReply);
+      setCoachingResult(validatedResult);
       setPhase("done");
     } catch (err) {
-      console.error("❌ [LiveNudge] Chat API Failure:", err);
-      setErrorMsg("Chat Error: " + (err.message || String(err)));
+      console.error("❌ [LiveNudge] Chat API / Validation Failure:", err);
+      setErrorMsg("Coaching Error: " + (err.message || String(err)));
+      setCoachingResult(null);
       setPhase("error");
     }
   }
@@ -507,7 +603,7 @@ export default function App() {
             )}
 
             {/* ── Chat Transcript & Coaching Nudge Display Area ──────────── */}
-            {(transcript !== "" || chatResponse !== "") && (
+            {(transcript !== "" || coachingResult !== null) && (
               <View style={[styles.card, styles.chatCard]}>
                 <View style={styles.cardHeaderRow}>
                   <Text style={[styles.cardSectionBadge, styles.chatBadge]}>
@@ -523,10 +619,38 @@ export default function App() {
                 </View>
 
                 {/* Coach Response Message */}
-                {chatResponse !== "" ? (
+                {coachingResult !== null ? (
                   <View style={styles.chatBubbleCoach}>
-                    <Text style={styles.chatBubbleCoachSender}>💡 LiveNudge Coaching Result:</Text>
-                    <Text style={styles.chatBubbleCoachText}>{chatResponse}</Text>
+                    <View style={styles.coachHeaderRow}>
+                      <Text style={styles.chatBubbleCoachSender}>💡 LiveNudge Coaching Result</Text>
+                      <View style={styles.modeBadge}>
+                        <Text style={styles.modeBadgeText}>
+                          {coachingResult.mode.toUpperCase()}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <Text style={styles.chatBubbleCoachText}>{coachingResult.nudge}</Text>
+
+                    {coachingResult.suggestedAction !== "" && (
+                      <View style={styles.actionBox}>
+                        <Text style={styles.actionLabel}>🎯 Suggested Action:</Text>
+                        <Text style={styles.actionText}>{coachingResult.suggestedAction}</Text>
+                      </View>
+                    )}
+
+                    {coachingResult.signals && coachingResult.signals.length > 0 && (
+                      <View style={styles.signalsContainer}>
+                        <Text style={styles.signalsLabel}>🔍 Observable Signals:</Text>
+                        <View style={styles.signalTagsRow}>
+                          {coachingResult.signals.map((sig, idx) => (
+                            <View key={idx} style={styles.signalTag}>
+                              <Text style={styles.signalTagText}>{sig}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+                    )}
                   </View>
                 ) : (
                   isLoading && (
@@ -787,6 +911,72 @@ const styles = StyleSheet.create({
     color: "#064e3b",
     lineHeight: 22,
     fontWeight: "500",
+  },
+  coachHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  modeBadge: {
+    backgroundColor: "#d1fae5",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#6ee7b7",
+  },
+  modeBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#065f46",
+    letterSpacing: 0.5,
+  },
+  actionBox: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#a7f3d0",
+  },
+  actionLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#047857",
+    marginBottom: 2,
+  },
+  actionText: {
+    fontSize: 13,
+    color: "#065f46",
+    lineHeight: 18,
+  },
+  signalsContainer: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#a7f3d0",
+  },
+  signalsLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#047857",
+    marginBottom: 4,
+  },
+  signalTagsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  signalTag: {
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#a7f3d0",
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  signalTagText: {
+    fontSize: 11,
+    color: "#065f46",
   },
   chatBubblePending: {
     padding: 10,
