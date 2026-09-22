@@ -25,6 +25,6 @@ module.exports = {
     extra: {
       sarvamApiKey: process.env.SARVAM_API_KEY || "",
     },
-    plugins: ["expo-audio"],
+    plugins: ["expo-audio", "expo-asset"],
   },
 };
